@@ -81,6 +81,13 @@ APP_ADMIN_PASSWORD=你的管理密码
 DASHSCOPE_API_KEY=你的百炼 Key
 ```
 
+并发提速相关配置默认已开启，可按机器资源调整：
+
+```bash
+WORKER_PROCESS_COUNT=2
+ANALYSIS_CHUNK_EXTRACT_CONCURRENCY=4
+```
+
 ### 3. 运行管理脚本
 
 ```bash
@@ -183,6 +190,11 @@ python -m miemie_podcast.api.app
 python -m miemie_podcast.worker.main
 npm run dev:web
 ```
+
+说明：
+
+- `WORKER_PROCESS_COUNT` 控制 Worker supervisor 拉起的子进程数，适合按 CPU / 模型限流能力调整到 `2-4`
+- `ANALYSIS_CHUNK_EXTRACT_CONCURRENCY` 控制单个 episode 在 `chunk_extract` 阶段的并发请求数
 
 ## 当前范围
 

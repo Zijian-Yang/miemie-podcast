@@ -50,6 +50,8 @@ class Settings:
     dashscope_base_url: str
     dashscope_compatible_base_url: str
     worker_poll_interval_seconds: int
+    worker_process_count: int
+    analysis_chunk_extract_concurrency: int
     mindmap_renderer_command: str
 
     @property
@@ -91,6 +93,8 @@ class Settings:
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
             ),
             worker_poll_interval_seconds=int(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "5")),
+            worker_process_count=max(1, int(os.getenv("WORKER_PROCESS_COUNT", "2"))),
+            analysis_chunk_extract_concurrency=max(1, int(os.getenv("ANALYSIS_CHUNK_EXTRACT_CONCURRENCY", "4"))),
             mindmap_renderer_command=os.getenv(
                 "MINDMAP_RENDERER_COMMAND", "node scripts/render-mindmap.mjs"
             ),

@@ -46,6 +46,8 @@ function refresh_runtime_config() {
   QUEUE_BACKEND="${QUEUE_BACKEND:-db_polling}"
   STORAGE_BACKEND="${STORAGE_BACKEND:-local}"
   AUTH_MODE="${AUTH_MODE:-password_single_user}"
+  WORKER_PROCESS_COUNT="${WORKER_PROCESS_COUNT:-2}"
+  ANALYSIS_CHUNK_EXTRACT_CONCURRENCY="${ANALYSIS_CHUNK_EXTRACT_CONCURRENCY:-4}"
 }
 
 function ensure_runtime_dirs() {
@@ -224,6 +226,7 @@ function print_header() {
   fi
   printf 'Web: %s:%s\n' "${APP_HOST}" "${APP_PORT}"
   printf 'API: %s:%s\n' "${API_HOST}" "${API_PORT}"
+  printf 'Worker 并发: 进程=%s | chunk_extract=%s\n' "${WORKER_PROCESS_COUNT}" "${ANALYSIS_CHUNK_EXTRACT_CONCURRENCY}"
   printf 'APP_DOMAIN: %s\n' "${APP_DOMAIN:-<未设置>}"
   printf '服务状态: %s=%s | %s=%s | %s=%s\n' \
     "${APP_SERVICE}" "$(get_service_status "${APP_SERVICE}")" \
@@ -727,6 +730,8 @@ DATABASE_URL=${DATABASE_URL}
 QUEUE_BACKEND=${QUEUE_BACKEND}
 STORAGE_BACKEND=${STORAGE_BACKEND}
 AUTH_MODE=${AUTH_MODE}
+WORKER_PROCESS_COUNT=${WORKER_PROCESS_COUNT}
+ANALYSIS_CHUNK_EXTRACT_CONCURRENCY=${ANALYSIS_CHUNK_EXTRACT_CONCURRENCY}
 EOF
 }
 
