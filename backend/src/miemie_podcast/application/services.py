@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 import time
 from pathlib import Path
@@ -565,28 +566,12 @@ class EpisodeService:
             episode_id,
             {"status": EpisodeStatus.ANALYZING, "processing_stage": "analyzing"},
         )
-        chunk_extracts = []
-        for chunk in chunks:
-            extraction = self.llm_provider.generate_json(
-                task="chunk_extract",
-                schema=CHUNK_EXTRACT_SCHEMA,
-                input_parts=[
-                    {
-                        "role": "user",
-                        "text": build_chunk_extract_prompt(chunk.text),
-                        "cacheable": False,
-                    }
-                ],
-                cache_strategy={"enabled": True},
-            )
-            chunk_extracts.append(
-                {
-                    "chunk_id": chunk.id,
-                    "start_ms": chunk.start_ms,
-                    "end_ms": chunk.end_ms,
-                    **extraction,
-                }
-            )
+        chunk_extract_worker_count = min(self.settings.analysis_chunk_extract_concurrency, len(chunks))
+        if chunk_extract_worker_count == 1:
+            chunk_extracts = [self._build_chunk_extract(chunk) for chunk in chunks]
+        else:
+            with ThreadPoolExecutor(max_workers=chunk_extract_worker_count) as executor:
+                chunk_extracts = list(executor.map(self._build_chunk_extract, chunks))
         sections = []
         bucket_size = 4
         for start in range(0, len(chunk_extracts), bucket_size):
@@ -604,49 +589,11 @@ class EpisodeService:
                 cache_strategy={"enabled": True},
             )
             sections.append(section)
-        summary_data = self.llm_provider.generate_json(
-            task="episode_summary",
-            schema=SUMMARY_SCHEMA,
-            input_parts=[
-                {
-                    "role": "user",
-                    "text": build_episode_summary_prompt(
-                        {
-                            "episode_title": episode.episode_title,
-                            "podcast_title": episode.podcast_title,
-                            "published_at": episode.published_at,
-                            "duration_seconds": episode.duration_seconds,
-                        },
-                        sections,
-                    ),
-                    "cacheable": True,
-                }
-            ],
-            cache_strategy={"enabled": True},
-        )
-        summary_data = normalize_summary_data(summary_data, sections, chunk_extracts)
-        knowledge_data = self.llm_provider.generate_json(
-            task="episode_knowledge",
-            schema=KNOWLEDGE_SCHEMA,
-            input_parts=[
-                {
-                    "role": "user",
-                    "text": build_episode_knowledge_prompt(
-                        {
-                            "episode_title": episode.episode_title,
-                            "podcast_title": episode.podcast_title,
-                            "published_at": episode.published_at,
-                            "duration_seconds": episode.duration_seconds,
-                        },
-                        sections,
-                        chunk_extracts[:12],
-                    ),
-                    "cacheable": True,
-                }
-            ],
-            cache_strategy={"enabled": True},
-        )
-        knowledge_data = normalize_knowledge_data(knowledge_data, sections, chunk_extracts)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            summary_future = executor.submit(self._build_summary_data, episode, sections, chunk_extracts)
+            knowledge_future = executor.submit(self._build_knowledge_data, episode, sections, chunk_extracts)
+            summary_data = summary_future.result()
+            knowledge_data = knowledge_future.result()
         mindmap_spec = self.llm_provider.generate_json(
             task="mindmap_spec_build",
             schema=MINDMAP_SCHEMA,
@@ -802,6 +749,78 @@ class EpisodeService:
             },
         )
         return {"status": "ready", "summary_theme_count": len(summary_data.get("themes", []))}
+
+    def _build_chunk_extract(self, chunk: Any) -> Dict[str, Any]:
+        extraction = self.llm_provider.generate_json(
+            task="chunk_extract",
+            schema=CHUNK_EXTRACT_SCHEMA,
+            input_parts=[
+                {
+                    "role": "user",
+                    "text": build_chunk_extract_prompt(chunk.text),
+                    "cacheable": False,
+                }
+            ],
+            cache_strategy={"enabled": True},
+        )
+        return {
+            "chunk_id": chunk.id,
+            "start_ms": chunk.start_ms,
+            "end_ms": chunk.end_ms,
+            **extraction,
+        }
+
+    def _build_episode_metadata(self, episode: Any) -> Dict[str, Any]:
+        return {
+            "episode_title": episode.episode_title,
+            "podcast_title": episode.podcast_title,
+            "published_at": episode.published_at,
+            "duration_seconds": episode.duration_seconds,
+        }
+
+    def _build_summary_data(
+        self,
+        episode: Any,
+        sections: Sequence[Dict[str, Any]],
+        chunk_extracts: Sequence[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        summary_data = self.llm_provider.generate_json(
+            task="episode_summary",
+            schema=SUMMARY_SCHEMA,
+            input_parts=[
+                {
+                    "role": "user",
+                    "text": build_episode_summary_prompt(self._build_episode_metadata(episode), sections),
+                    "cacheable": True,
+                }
+            ],
+            cache_strategy={"enabled": True},
+        )
+        return normalize_summary_data(summary_data, sections, chunk_extracts)
+
+    def _build_knowledge_data(
+        self,
+        episode: Any,
+        sections: Sequence[Dict[str, Any]],
+        chunk_extracts: Sequence[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        knowledge_data = self.llm_provider.generate_json(
+            task="episode_knowledge",
+            schema=KNOWLEDGE_SCHEMA,
+            input_parts=[
+                {
+                    "role": "user",
+                    "text": build_episode_knowledge_prompt(
+                        self._build_episode_metadata(episode),
+                        sections,
+                        chunk_extracts[:12],
+                    ),
+                    "cacheable": True,
+                }
+            ],
+            cache_strategy={"enabled": True},
+        )
+        return normalize_knowledge_data(knowledge_data, sections, chunk_extracts)
 
     def _get_adapter(self, source_url: str) -> SourceAdapter:
         for adapter in self.source_adapters:
