@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/miemie-podcast/apps/web
-EnvironmentFile=/opt/miemie-podcast/.env
+WorkingDirectory=__ROOT_DIR__/apps/web
+EnvironmentFile=__ROOT_DIR__/.env
 Environment=APP_ENV=production
 Environment=NODE_OPTIONS=--no-experimental-webstorage
-ExecStart=/usr/bin/npx next start --hostname ${APP_HOST} --port ${APP_PORT}
+ExecStart=__NPX_BIN__ next start --hostname ${APP_HOST} --port ${APP_PORT}
 Restart=always
 RestartSec=5
 

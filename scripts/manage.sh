@@ -306,10 +306,36 @@ function install_playwright() {
   fi
 }
 
+function escape_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
+}
+
+function render_systemd_unit() {
+  local template_path="$1"
+  local target_path="$2"
+  local root_dir_escaped python_bin_escaped npx_bin_escaped
+  root_dir_escaped="$(escape_sed_replacement "${ROOT_DIR}")"
+  python_bin_escaped="$(escape_sed_replacement "${VENV_DIR}/bin/python")"
+  npx_bin_escaped="$(escape_sed_replacement "$(command -v npx)")"
+  sed \
+    -e "s/__ROOT_DIR__/${root_dir_escaped}/g" \
+    -e "s/__PYTHON_BIN__/${python_bin_escaped}/g" \
+    -e "s/__NPX_BIN__/${npx_bin_escaped}/g" \
+    "${template_path}" | sudo tee "${target_path}" >/dev/null
+}
+
 function install_systemd() {
-  sudo cp "${SYSTEMD_DIR}/${APP_SERVICE}.service" /etc/systemd/system/${APP_SERVICE}.service
-  sudo cp "${SYSTEMD_DIR}/${API_SERVICE}.service" /etc/systemd/system/${API_SERVICE}.service
-  sudo cp "${SYSTEMD_DIR}/${WORKER_SERVICE}.service" /etc/systemd/system/${WORKER_SERVICE}.service
+  if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+    echo "未找到 Python 虚拟环境，请先执行安装部署。"
+    return 1
+  fi
+  if ! command -v npx >/dev/null 2>&1; then
+    echo "未找到 npx，请先安装 Node 依赖。"
+    return 1
+  fi
+  render_systemd_unit "${SYSTEMD_DIR}/${APP_SERVICE}.service" "/etc/systemd/system/${APP_SERVICE}.service"
+  render_systemd_unit "${SYSTEMD_DIR}/${API_SERVICE}.service" "/etc/systemd/system/${API_SERVICE}.service"
+  render_systemd_unit "${SYSTEMD_DIR}/${WORKER_SERVICE}.service" "/etc/systemd/system/${WORKER_SERVICE}.service"
   sudo systemctl daemon-reload
 }
 
@@ -567,6 +593,8 @@ function command_start() {
   ensure_env
   ensure_runtime_dirs
   if is_systemd_mode; then
+    install_systemd
+    sudo systemctl reset-failed "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}" || true
     sudo systemctl start "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}"
     echo "服务已启动。"
     return 0
@@ -613,6 +641,8 @@ function command_restart() {
     return 0
   fi
   if is_systemd_mode; then
+    install_systemd
+    sudo systemctl reset-failed "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}" || true
     sudo systemctl restart "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}"
     echo "服务已重启。"
     return 0
@@ -684,6 +714,8 @@ function command_update() {
   install_playwright
   command_rebuild_web
   if is_systemd_mode; then
+    install_systemd
+    sudo systemctl reset-failed "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}" || true
     sudo systemctl restart "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}"
   else
     stop_local_service "${APP_SERVICE}"
