@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: miemie-podcast-backend
+Version: 0.1.0
+Summary: Backend services for Miemie Podcast
+Requires-Python: >=3.9
+Requires-Dist: beautifulsoup4>=4.12.3
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: httpx>=0.27.2
+Requires-Dist: pydantic>=2.9.0
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: uvicorn>=0.30.6
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.0; extra == "dev"

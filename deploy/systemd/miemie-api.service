@@ -1,0 +1,15 @@
+[Unit]
+Description=Miemie Podcast API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/miemie-podcast
+EnvironmentFile=/opt/miemie-podcast/.env
+Environment=APP_ENV=production
+ExecStart=/opt/miemie-podcast/.venv/bin/python -m miemie_podcast.api.app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
