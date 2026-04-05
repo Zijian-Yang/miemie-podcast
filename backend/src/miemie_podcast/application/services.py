@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from miemie_podcast.adapters.providers.qwen import render_mindmap_png
+from miemie_podcast.adapters.providers.qwen import (
+    ASR_ACCEPTED_STATUSES,
+    ASR_FAILURE_STATUSES,
+    render_mindmap_png,
+)
 from miemie_podcast.application.prompts import (
     build_chunk_extract_prompt,
     build_episode_knowledge_prompt,
@@ -212,23 +218,32 @@ class EpisodeService:
         self.source_adapters = list(source_adapters)
 
     def import_episode(self, context: RequestContext, source_url: str) -> Dict[str, Any]:
-        existing = self.episode_repository.find_active_by_source_url(context.workspace_id, source_url)
+        canonical_source_url = source_url.strip()
+        if not canonical_source_url:
+            raise ValueError("请输入有效的小宇宙单集链接。")
+        existing = self.episode_repository.find_active_by_source_url(context.workspace_id, canonical_source_url)
         if existing:
             return {"episode": existing, "reused": True}
-        adapter = self._get_adapter(source_url)
-        source_episode_id = source_url.rstrip("/").split("/")[-1]
-        episode = self.episode_repository.create(
-            context=context,
-            source_type=adapter.__class__.__name__,
-            source_url=source_url,
-            source_episode_id=source_episode_id,
-        )
+        adapter = self._get_adapter(canonical_source_url)
+        source_episode_id = canonical_source_url.rstrip("/").split("/")[-1]
+        try:
+            episode = self.episode_repository.create(
+                context=context,
+                source_type=adapter.__class__.__name__,
+                source_url=canonical_source_url,
+                source_episode_id=source_episode_id,
+            )
+        except sqlite3.IntegrityError:
+            existing = self.episode_repository.find_active_by_source_url(context.workspace_id, canonical_source_url)
+            if existing:
+                return {"episode": existing, "reused": True}
+            raise ValueError("该链接已存在冲突记录。请重试；如果刚删除过这条记录，请重启服务后再导入。")
         job = self.queue.enqueue(
             workspace_id=context.workspace_id,
             episode_id=episode.id,
             job_type="import_episode",
-            payload={"episode_id": episode.id, "source_url": source_url},
-            dedupe_key=f"{context.workspace_id}:{source_url}",
+            payload={"episode_id": episode.id, "source_url": canonical_source_url},
+            dedupe_key=f"{context.workspace_id}:{canonical_source_url}",
             run_after=None,
             stage="import_episode",
         )
@@ -269,6 +284,11 @@ class EpisodeService:
     def delete_episode(self, context: RequestContext, episode_id: str) -> None:
         self._get_episode_or_raise(context.workspace_id, episode_id)
         self.episode_repository.soft_delete(context.workspace_id, episode_id)
+        self.job_repository.cancel_pending_for_episode(
+            context.workspace_id,
+            episode_id,
+            "Episode was deleted before background processing completed.",
+        )
         self.storage.delete_prefix(f"workspaces/{context.workspace_id}/episodes/{episode_id}")
 
     def answer_question(self, context: RequestContext, episode_id: str, question: str) -> Dict[str, Any]:
@@ -312,6 +332,8 @@ class EpisodeService:
         return self.storage.resolve_path(artifact.relative_path)
 
     def process_import_job(self, workspace_id: str, episode_id: str, source_url: str) -> Dict[str, Any]:
+        if not self.episode_repository.get_by_id(workspace_id, episode_id):
+            return {"status": "skipped_deleted", "episode_id": episode_id}
         adapter = self._get_adapter(source_url)
         result = adapter.parse(source_url)
         episode = self._get_episode_or_raise(workspace_id, episode_id)
@@ -362,28 +384,43 @@ class EpisodeService:
             },
         )
         transcription_submit = self.stt_provider.submit_file(audio_url, metadata)
+        task_id = transcription_submit["task_id"]
+        verified_result = self._confirm_transcription_task_started(task_id)
         self.episode_repository.update_fields(
             workspace_id,
             episode_id,
             {
                 "status": EpisodeStatus.TRANSCRIBING,
                 "processing_stage": "transcribing",
-                "transcription_task_id": transcription_submit["task_id"],
+                "transcription_task_id": task_id,
                 "transcription_provider": "qwen3-asr-flash-filetrans",
             },
         )
+        if verified_result["status"] == "SUCCEEDED":
+            return self._persist_transcription_success(
+                workspace_id=workspace_id,
+                episode_id=episode_id,
+                transcript_json=verified_result["transcript_json"],
+            )
         self.queue.enqueue(
             workspace_id=workspace_id,
             episode_id=episode_id,
             job_type="poll_transcription",
-            payload={"episode_id": episode_id, "task_id": transcription_submit["task_id"]},
+            payload={"episode_id": episode_id, "task_id": task_id},
             dedupe_key=f"{workspace_id}:{episode_id}:poll_transcription",
-            run_after=seconds_from_now(20),
+            run_after=seconds_from_now(self.settings.worker_poll_interval_seconds),
             stage="poll_transcription",
         )
-        return {"status": "submitted", "task_id": transcription_submit["task_id"]}
+        return {
+            "status": verified_result["status"].lower(),
+            "task_id": task_id,
+            "submit_status": transcription_submit["task_status"],
+            "verified_status": verified_result["status"],
+        }
 
     def process_poll_transcription_job(self, workspace_id: str, episode_id: str, task_id: str) -> Dict[str, Any]:
+        if not self.episode_repository.get_by_id(workspace_id, episode_id):
+            return {"status": "skipped_deleted", "episode_id": episode_id, "task_id": task_id}
         result = self.stt_provider.get_result(task_id)
         if result["status"] in {"PENDING", "RUNNING"}:
             self.queue.enqueue(
@@ -392,7 +429,7 @@ class EpisodeService:
                 job_type="poll_transcription",
                 payload={"episode_id": episode_id, "task_id": task_id},
                 dedupe_key=f"{workspace_id}:{episode_id}:poll_transcription",
-                run_after=seconds_from_now(20),
+                run_after=seconds_from_now(self.settings.worker_poll_interval_seconds),
                 stage="poll_transcription",
             )
             return {"status": result["status"].lower(), "task_id": task_id}
@@ -408,7 +445,38 @@ class EpisodeService:
                 },
             )
             raise RuntimeError(result.get("message") or "Transcription failed.")
-        transcript_json = result["transcript_json"]
+        return self._persist_transcription_success(
+            workspace_id=workspace_id,
+            episode_id=episode_id,
+            transcript_json=result["transcript_json"],
+        )
+
+    def _confirm_transcription_task_started(self, task_id: str) -> Dict[str, Any]:
+        attempts = max(1, min(3, self.settings.worker_poll_interval_seconds))
+        last_result: Dict[str, Any] = {"status": "UNKNOWN", "task_id": task_id}
+        for index in range(attempts):
+            result = self.stt_provider.get_result(task_id)
+            status = str(result.get("status", "UNKNOWN")).upper()
+            if status in ASR_ACCEPTED_STATUSES:
+                return result
+            if status in ASR_FAILURE_STATUSES and status != "UNKNOWN":
+                raise RuntimeError(result.get("message") or result.get("code") or "Transcription failed.")
+            last_result = result
+            if index < attempts - 1:
+                time.sleep(1)
+        raise RuntimeError(
+            last_result.get("message")
+            or "DashScope accepted the ASR task but did not confirm a PENDING/RUNNING/SUCCEEDED state."
+        )
+
+    def _persist_transcription_success(
+        self,
+        workspace_id: str,
+        episode_id: str,
+        transcript_json: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not self.episode_repository.get_by_id(workspace_id, episode_id):
+            return {"status": "skipped_deleted", "episode_id": episode_id}
         raw_relative_path = f"workspaces/{workspace_id}/episodes/{episode_id}/transcript/raw_asr.json"
         raw_save_result = self.storage.save_text(raw_relative_path, json_dumps(transcript_json))
         self.artifact_repository.upsert(
@@ -486,7 +554,9 @@ class EpisodeService:
         return {"status": "transcribed", "chunk_count": len(chunks)}
 
     def process_analyze_episode_job(self, workspace_id: str, episode_id: str) -> Dict[str, Any]:
-        episode = self._get_episode_or_raise(workspace_id, episode_id)
+        episode = self.episode_repository.get_by_id(workspace_id, episode_id)
+        if not episode:
+            return {"status": "skipped_deleted", "episode_id": episode_id}
         chunks = self.transcript_repository.list_by_episode(workspace_id, episode_id)
         if not chunks:
             raise RuntimeError("No transcript chunks found for analysis.")

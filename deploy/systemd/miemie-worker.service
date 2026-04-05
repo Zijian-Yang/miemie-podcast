@@ -7,6 +7,7 @@ Type=simple
 WorkingDirectory=/opt/miemie-podcast
 EnvironmentFile=/opt/miemie-podcast/.env
 Environment=APP_ENV=production
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/miemie-podcast/.venv/bin/python -m miemie_podcast.worker.main
 Restart=always
 RestartSec=5

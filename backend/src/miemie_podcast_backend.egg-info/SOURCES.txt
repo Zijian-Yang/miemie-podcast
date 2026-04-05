@@ -5,6 +5,7 @@ src/miemie_podcast/utils.py
 src/miemie_podcast/adapters/auth/password.py
 src/miemie_podcast/adapters/db/repositories.py
 src/miemie_podcast/adapters/db/sqlite.py
+src/miemie_podcast/adapters/providers/capabilities.py
 src/miemie_podcast/adapters/providers/qwen.py
 src/miemie_podcast/adapters/queue/db_polling.py
 src/miemie_podcast/adapters/sources/xiaoyuzhou.py
@@ -18,6 +19,8 @@ src/miemie_podcast/api/routes/episodes.py
 src/miemie_podcast/api/routes/jobs.py
 src/miemie_podcast/application/container.py
 src/miemie_podcast/application/pipeline.py
+src/miemie_podcast/application/presentation.py
+src/miemie_podcast/application/prompts.py
 src/miemie_podcast/application/services.py
 src/miemie_podcast/domain/__init__.py
 src/miemie_podcast/domain/models.py
@@ -32,4 +35,6 @@ src/miemie_podcast_backend.egg-info/dependency_links.txt
 src/miemie_podcast_backend.egg-info/requires.txt
 src/miemie_podcast_backend.egg-info/top_level.txt
 tests/test_pipeline.py
+tests/test_presentation.py
+tests/test_prompts.py
 tests/test_xiaoyuzhou_adapter.py

@@ -1,5 +1,4 @@
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+export const API_BASE_URL = "/__miemie_api";
 
 export class ApiError extends Error {
   status: number;
@@ -26,10 +25,17 @@ export async function apiRequest<T>(
   if (!response.ok) {
     let message = response.statusText;
     try {
-      const payload = await response.json();
-      message = payload.detail || payload.message || message;
+      const raw = await response.text();
+      if (raw) {
+        try {
+          const payload = JSON.parse(raw) as { detail?: string; message?: string };
+          message = payload.detail || payload.message || raw || message;
+        } catch {
+          message = raw;
+        }
+      }
     } catch {
-      message = await response.text();
+      message = response.statusText;
     }
     throw new ApiError(message, response.status);
   }

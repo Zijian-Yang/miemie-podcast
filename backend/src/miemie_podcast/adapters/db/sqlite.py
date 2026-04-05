@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS episodes (
   FOREIGN KEY(created_by) REFERENCES users(id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_workspace_source_url ON episodes(workspace_id, source_url);
+DROP INDEX IF EXISTS idx_episodes_workspace_source_url;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_workspace_source_url_active ON episodes(workspace_id, source_url) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_episodes_workspace_status ON episodes(workspace_id, status);
 
 CREATE TABLE IF NOT EXISTS episode_sources (
@@ -249,4 +250,3 @@ class SQLiteDatabase:
             yield connection
         finally:
             connection.close()
-

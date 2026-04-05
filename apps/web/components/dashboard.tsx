@@ -219,10 +219,10 @@ export function Dashboard() {
 
       <section className="footer-strip">
         <div>
-          <strong>后端 API:</strong> {API_BASE_URL}
+          <strong>支持能力:</strong> 总结、知识沉淀、逐字稿、脑图、单集问答
         </div>
         <div>
-          <strong>当前首版:</strong> SQLite + 本地文件 + 单用户口令
+          <strong>处理范围:</strong> 小宇宙单集链接导入与历史检索
         </div>
       </section>
     </div>

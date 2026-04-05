@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -11,7 +13,25 @@ from miemie_podcast.application.prompts import get_task_system_prompt
 from miemie_podcast.config import Settings
 from miemie_podcast.domain.models import Citation, QAAnswer
 from miemie_podcast.ports.services import LanguageModelProvider, SpeechToTextProvider
-from miemie_podcast.utils import json_loads
+from miemie_podcast.utils import json_dumps, json_loads
+
+
+ASR_ACCEPTED_STATUSES = {"PENDING", "RUNNING", "SUCCEEDED"}
+ASR_FAILURE_STATUSES = {"FAILED", "UNKNOWN"}
+logger = logging.getLogger(__name__)
+
+
+def normalize_asr_task_status(value: Any) -> str:
+    return str(value or "UNKNOWN").upper()
+
+
+def normalize_transcription_result_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if parsed.scheme == "http":
+        return urlunparse(parsed._replace(scheme="https"))
+    return url
 
 
 class QwenAsrFlashFiletransProvider(SpeechToTextProvider):
@@ -24,6 +44,7 @@ class QwenAsrFlashFiletransProvider(SpeechToTextProvider):
                 "Content-Type": "application/json",
             },
         )
+        self.download_client = httpx.Client(timeout=60.0)
 
     def submit_file(self, url: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
         if not self.settings.dashscope_api_key:
@@ -37,6 +58,7 @@ class QwenAsrFlashFiletransProvider(SpeechToTextProvider):
                 "language": metadata.get("language", "zh"),
             },
         }
+        logger.info("DashScope ASR submit payload: %s", json_dumps(payload))
         response = self.client.post(
             f"{self.settings.dashscope_base_url}/api/v1/services/audio/asr/transcription",
             headers={"X-DashScope-Async": "enable"},
@@ -44,10 +66,20 @@ class QwenAsrFlashFiletransProvider(SpeechToTextProvider):
         )
         response.raise_for_status()
         data = response.json()
+        logger.info("DashScope ASR submit response: %s", json_dumps(data))
         output = data.get("output") or {}
+        task_id = output.get("task_id")
+        task_status = normalize_asr_task_status(output.get("task_status"))
+        if not task_id:
+            raise RuntimeError("DashScope ASR submit succeeded but did not return task_id.")
+        if task_status in ASR_FAILURE_STATUSES:
+            message = output.get("message") or output.get("code") or "DashScope ASR rejected the task."
+            raise RuntimeError(message)
+        if task_status not in ASR_ACCEPTED_STATUSES:
+            raise RuntimeError(f"Unexpected DashScope ASR submit status: {task_status}")
         return {
-            "task_id": output.get("task_id"),
-            "task_status": output.get("task_status", "PENDING"),
+            "task_id": task_id,
+            "task_status": task_status,
             "raw": data,
         }
 
@@ -60,8 +92,9 @@ class QwenAsrFlashFiletransProvider(SpeechToTextProvider):
         )
         response.raise_for_status()
         data = response.json()
+        logger.info("DashScope ASR poll response for task %s: %s", task_id, json_dumps(data))
         output = data.get("output") or {}
-        status = output.get("task_status", "UNKNOWN")
+        status = normalize_asr_task_status(output.get("task_status"))
         if status != "SUCCEEDED":
             return {
                 "task_id": task_id,
@@ -71,10 +104,19 @@ class QwenAsrFlashFiletransProvider(SpeechToTextProvider):
                 "code": output.get("code"),
             }
         result = output.get("result") or {}
-        transcript_url = result.get("transcription_url")
-        transcript_response = self.client.get(transcript_url)
+        transcript_url = normalize_transcription_result_url(result.get("transcription_url"))
+        logger.info("DashScope ASR task %s succeeded, transcription_url=%s", task_id, transcript_url)
+        transcript_response = self.download_client.get(transcript_url)
         transcript_response.raise_for_status()
         transcript_json = transcript_response.json()
+        transcripts = transcript_json.get("transcripts") or []
+        sentence_count = len((transcripts[0].get("sentences") or [])) if transcripts else 0
+        logger.info(
+            "DashScope ASR transcript fetched for task %s: transcripts=%s, sentence_count=%s",
+            task_id,
+            len(transcripts),
+            sentence_count,
+        )
         return {
             "task_id": task_id,
             "status": status,

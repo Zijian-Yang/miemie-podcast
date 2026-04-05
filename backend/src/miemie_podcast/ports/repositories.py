@@ -117,6 +117,10 @@ class JobRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def cancel_pending_for_episode(self, workspace_id: str, episode_id: str, reason: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def heartbeat(self, job_id: str, stage: str) -> None:
         raise NotImplementedError
 
@@ -189,4 +193,3 @@ class ObjectStorage(ABC):
     @abstractmethod
     def delete_prefix(self, relative_prefix: str) -> None:
         raise NotImplementedError
-

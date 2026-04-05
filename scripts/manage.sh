@@ -133,6 +133,11 @@ function local_pid_file() {
   echo "${PID_DIR}/${service}.pid"
 }
 
+function local_dev_pid_file() {
+  local service="$1"
+  echo "${PID_DIR}/${service}.dev.pid"
+}
+
 function local_log_file() {
   local service="$1"
   echo "${LOG_DIR}/${service}.log"
@@ -157,6 +162,26 @@ function remove_pid_file() {
   local pid_file
   pid_file="$(local_pid_file "${service}")"
   rm -f "${pid_file}"
+}
+
+function read_dev_pid() {
+  local service="$1"
+  local pid_file
+  pid_file="$(local_dev_pid_file "${service}")"
+  if [[ -f "${pid_file}" ]]; then
+    cat "${pid_file}"
+  fi
+}
+
+function write_dev_pid() {
+  local service="$1"
+  local pid="$2"
+  echo "${pid}" > "$(local_dev_pid_file "${service}")"
+}
+
+function remove_dev_pid_file() {
+  local service="$1"
+  rm -f "$(local_dev_pid_file "${service}")"
 }
 
 function get_service_status() {
@@ -290,6 +315,16 @@ function command_rebuild_web() {
   echo "前端已重建。"
 }
 
+function build_node_options() {
+  local existing="${NODE_OPTIONS:-}"
+  local extra="--no-experimental-webstorage"
+  if [[ -n "${existing}" ]]; then
+    echo "${existing} ${extra}"
+  else
+    echo "${extra}"
+  fi
+}
+
 function command_install() {
   ensure_install_supported || return 1
   ensure_env
@@ -393,21 +428,113 @@ function run_foreground_command() {
   echo "已返回主菜单。"
 }
 
-function run_dev_api() {
+function show_dev_endpoints() {
+  local web_host api_host
+  web_host="$(normalize_origin_host "${APP_HOST}")"
+  api_host="$(normalize_origin_host "${API_HOST}")"
+  echo "开发模式服务地址："
+  echo "- Web 首页: http://${web_host}:${APP_PORT}"
+  echo "- API 基础地址: http://${api_host}:${API_PORT}"
+  echo "- API 健康检查: http://${api_host}:${API_PORT}/healthz"
+  echo "- 详情页示例: http://${web_host}:${APP_PORT}/episodes/<episode_id>"
+  echo
+  echo "开发模式日志文件："
+  echo "- Web: $(local_log_file "${APP_SERVICE}")"
+  echo "- API: $(local_log_file "${API_SERVICE}")"
+  echo "- Worker: $(local_log_file "${WORKER_SERVICE}")"
+}
+
+function run_dev_stack() {
   ensure_dev_runtime_ready || return 1
+  ensure_runtime_dirs
   ensure_port_available "${API_HOST}" "${API_PORT}" "API" || return 1
-  (cd "${ROOT_DIR}" && run_foreground_command env APP_ENV=development "${VENV_DIR}/bin/python" -m miemie_podcast.api.app)
-}
-
-function run_dev_worker() {
-  ensure_dev_runtime_ready || return 1
-  (cd "${ROOT_DIR}" && run_foreground_command env APP_ENV=development "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main)
-}
-
-function run_dev_web() {
-  ensure_dev_runtime_ready || return 1
   ensure_port_available "${APP_HOST}" "${APP_PORT}" "Web" || return 1
-  (cd "${ROOT_DIR}" && run_foreground_command env APP_ENV=development npm run dev:web -- --hostname "${APP_HOST}" --port "${APP_PORT}")
+
+  local api_log worker_log web_log api_pid worker_pid web_pid
+  api_log="$(local_log_file "${API_SERVICE}")"
+  worker_log="$(local_log_file "${WORKER_SERVICE}")"
+  web_log="$(local_log_file "${APP_SERVICE}")"
+  : > "${api_log}"
+  : > "${worker_log}"
+  : > "${web_log}"
+
+  echo "正在启动开发模式所需服务..."
+  (
+    cd "${ROOT_DIR}"
+    env APP_ENV=development PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.api.app >>"${api_log}" 2>&1 &
+    api_pid=$!
+    write_dev_pid "${API_SERVICE}" "${api_pid}"
+    env APP_ENV=development PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main >>"${worker_log}" 2>&1 &
+    worker_pid=$!
+    write_dev_pid "${WORKER_SERVICE}" "${worker_pid}"
+    (
+      cd "${ROOT_DIR}/apps/web"
+      env APP_ENV=development NODE_OPTIONS="$(build_node_options)" WATCHPACK_POLLING=true npx next dev --hostname "${APP_HOST}" --port "${APP_PORT}"
+    ) >>"${web_log}" 2>&1 &
+    web_pid=$!
+    write_dev_pid "${APP_SERVICE}" "${web_pid}"
+
+    sleep 2
+    if ! is_pid_running "${api_pid}"; then
+      echo "API 启动失败，请查看日志：${api_log}"
+      wait "${api_pid}" 2>/dev/null || true
+      kill "${worker_pid}" "${web_pid}" 2>/dev/null || true
+      return 1
+    fi
+    if ! is_pid_running "${worker_pid}"; then
+      echo "Worker 启动失败，请查看日志：${worker_log}"
+      kill "${api_pid}" "${web_pid}" 2>/dev/null || true
+      wait "${worker_pid}" 2>/dev/null || true
+      return 1
+    fi
+    if ! is_pid_running "${web_pid}"; then
+      echo "Web 启动失败，请查看日志：${web_log}"
+      kill "${api_pid}" "${worker_pid}" 2>/dev/null || true
+      wait "${web_pid}" 2>/dev/null || true
+      return 1
+    fi
+
+    show_dev_endpoints
+    echo "开发模式已启动，按 Ctrl+C 结束所有开发进程并返回菜单。"
+
+    trap 'kill "${api_pid}" "${worker_pid}" "${web_pid}" 2>/dev/null || true; remove_dev_pid_file "${API_SERVICE}"; remove_dev_pid_file "${WORKER_SERVICE}"; remove_dev_pid_file "${APP_SERVICE}"' INT TERM EXIT
+    tail -f "${api_log}" "${worker_log}" "${web_log}"
+  )
+  local status=$?
+  if [[ "${status}" -ne 0 && "${status}" -ne 130 ]]; then
+    echo "开发模式退出异常，状态码: ${status}"
+    return "${status}"
+  fi
+  echo
+  echo "开发模式已停止，已返回主菜单。"
+}
+
+function stop_local_dev_service() {
+  local service="$1"
+  local pid
+  pid="$(read_dev_pid "${service}")"
+  if [[ -z "${pid}" ]]; then
+    echo "${service} 开发进程未运行。"
+    return 0
+  fi
+  if ! is_pid_running "${pid}"; then
+    echo "${service} 开发 PID 文件已过期，正在清理。"
+    remove_dev_pid_file "${service}"
+    return 0
+  fi
+  kill "${pid}" 2>/dev/null || true
+  sleep 1
+  if is_pid_running "${pid}"; then
+    kill -9 "${pid}" 2>/dev/null || true
+  fi
+  remove_dev_pid_file "${service}"
+  echo "${service} 开发进程已停止。"
+}
+
+function stop_local_dev_stack() {
+  stop_local_dev_service "${APP_SERVICE}"
+  stop_local_dev_service "${WORKER_SERVICE}"
+  stop_local_dev_service "${API_SERVICE}"
 }
 
 function stop_local_service() {
@@ -455,9 +582,9 @@ function command_start() {
   fi
   ensure_port_available "${API_HOST}" "${API_PORT}" "API" || return 1
   ensure_port_available "${APP_HOST}" "${APP_PORT}" "Web" || return 1
-  start_local_service "${API_SERVICE}" env APP_ENV=production "${VENV_DIR}/bin/python" -m miemie_podcast.api.app
-  start_local_service "${WORKER_SERVICE}" env APP_ENV=production "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main
-  start_local_service "${APP_SERVICE}" env APP_ENV=production npm run start:web -- --hostname "${APP_HOST}" --port "${APP_PORT}"
+  start_local_service "${API_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.api.app
+  start_local_service "${WORKER_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main
+  start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}/apps/web\" && env APP_ENV=production NODE_OPTIONS=\"$(build_node_options)\" npx next start --hostname \"${APP_HOST}\" --port \"${APP_PORT}\""
 }
 
 function command_stop() {
@@ -559,9 +686,9 @@ function command_update() {
     stop_local_service "${APP_SERVICE}"
     stop_local_service "${WORKER_SERVICE}"
     stop_local_service "${API_SERVICE}"
-    start_local_service "${API_SERVICE}" env APP_ENV=production "${VENV_DIR}/bin/python" -m miemie_podcast.api.app
-    start_local_service "${WORKER_SERVICE}" env APP_ENV=production "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main
-    start_local_service "${APP_SERVICE}" env APP_ENV=production npm run start:web -- --hostname "${APP_HOST}" --port "${APP_PORT}"
+    start_local_service "${API_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.api.app
+    start_local_service "${WORKER_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main
+    start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}/apps/web\" && env APP_ENV=production NODE_OPTIONS=\"$(build_node_options)\" npx next start --hostname \"${APP_HOST}\" --port \"${APP_PORT}\""
   fi
   echo "项目已更新。"
 }
@@ -570,19 +697,17 @@ function start_menu() {
   while true; do
     printf '\n---------------- 启动模式选择 ----------------\n'
     printf '1. 生产模式启动（守护运行）\n'
-    printf '2. 开发模式运行 API（前台）\n'
-    printf '3. 开发模式运行 Worker（前台）\n'
-    printf '4. 开发模式运行 Web（前台）\n'
-    printf '5. 返回主菜单\n'
-    printf '请选择操作 [1-5]: '
+    printf '2. 开发模式一键启动（Web + API + Worker）\n'
+    printf '3. 停止所有开发模式进程\n'
+    printf '4. 返回主菜单\n'
+    printf '请选择操作 [1-4]: '
     local choice
     read -r choice
     case "${choice}" in
       1) run_action_with_pause command_start; return 0 ;;
-      2) run_action_without_pause run_dev_api; return 0 ;;
-      3) run_action_without_pause run_dev_worker; return 0 ;;
-      4) run_action_without_pause run_dev_web; return 0 ;;
-      5) return 0 ;;
+      2) run_action_without_pause run_dev_stack; return 0 ;;
+      3) run_action_with_pause stop_local_dev_stack; return 0 ;;
+      4) return 0 ;;
       *) echo "无效选择，请重新输入。"; pause_screen ;;
     esac
   done

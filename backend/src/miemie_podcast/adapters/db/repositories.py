@@ -577,6 +577,26 @@ class SQLiteJobRepository(JobRepository):
             ).fetchone()
             return _row_to_job(row) if row else None
 
+    def cancel_pending_for_episode(self, workspace_id: str, episode_id: str, reason: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE jobs
+                SET status = ?, error_json = ?, updated_at = ?
+                WHERE workspace_id = ? AND episode_id = ? AND status IN (?, ?)
+                """,
+                (
+                    JobStatus.FAILED.value,
+                    json_dumps({"message": reason, "retryable": False}),
+                    now_iso(),
+                    workspace_id,
+                    episode_id,
+                    JobStatus.PENDING.value,
+                    JobStatus.PROCESSING.value,
+                ),
+            )
+            connection.commit()
+
     def heartbeat(self, job_id: str, stage: str) -> None:
         with self.database.connect() as connection:
             connection.execute(
@@ -876,4 +896,3 @@ class SQLiteArtifactRepository(ArtifactRepository):
                 (workspace_id, episode_id, artifact_key),
             ).fetchone()
             return _row_to_artifact(row) if row else None
-

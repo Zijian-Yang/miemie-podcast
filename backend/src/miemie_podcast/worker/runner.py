@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from miemie_podcast.application.container import Container
+
+
+logger = logging.getLogger(__name__)
 
 
 class WorkerRunner:
@@ -15,6 +19,7 @@ class WorkerRunner:
         claimed_jobs = self.container.job_queue.claim(worker_id, self.SUPPORTED_JOB_TYPES, limit=1)
         if not claimed_jobs:
             return 0
+        logger.info("Worker claimed %s job(s): %s", len(claimed_jobs), [job["job_id"] for job in claimed_jobs])
         for job in claimed_jobs:
             self._process_job(job)
         return len(claimed_jobs)
@@ -25,6 +30,13 @@ class WorkerRunner:
         job_type = job["job_type"]
         payload = job["payload"]
         self.container.job_queue.heartbeat(job_id, progress=None, stage=job_type)
+        logger.info(
+            "Worker processing job: job_id=%s, job_type=%s, workspace_id=%s, episode_id=%s",
+            job_id,
+            job_type,
+            workspace_id,
+            payload.get("episode_id"),
+        )
         try:
             if job_type == "import_episode":
                 result = self.container.episode_service.process_import_job(
@@ -46,10 +58,11 @@ class WorkerRunner:
             else:
                 raise RuntimeError(f"Unsupported job type: {job_type}")
             self.container.job_queue.complete(job_id, result)
+            logger.info("Worker completed job: job_id=%s, job_type=%s, result=%s", job_id, job_type, result)
         except Exception as exc:  # noqa: BLE001
+            logger.exception("Worker failed job: job_id=%s, job_type=%s", job_id, job_type)
             self.container.job_queue.fail(
                 job_id,
                 {"message": str(exc), "job_type": job_type},
                 retryable=job_type == "poll_transcription",
             )
-

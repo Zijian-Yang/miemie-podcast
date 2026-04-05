@@ -31,10 +31,10 @@ export default function LoginPage() {
   return (
     <main className="login-shell">
       <section className="login-card">
-        <p className="eyebrow">Single User Workspace</p>
+        <p className="eyebrow">Miemie Podcast</p>
         <h1>登录 Miemie Podcast</h1>
         <p className="hero-copy">
-          首版采用简单管理口令保护工作台，内部数据结构已预留多用户与 Postgres / Redis 迁移接口。
+          登录后即可导入小宇宙单集链接，生成总结、知识沉淀、逐字稿、脑图和问答结果。
         </p>
         <form className="stack" onSubmit={handleSubmit}>
           <input
@@ -53,4 +53,3 @@ export default function LoginPage() {
     </main>
   );
 }
-

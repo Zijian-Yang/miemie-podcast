@@ -7,7 +7,8 @@ Type=simple
 WorkingDirectory=/opt/miemie-podcast/apps/web
 EnvironmentFile=/opt/miemie-podcast/.env
 Environment=APP_ENV=production
-ExecStart=/usr/bin/npm run start -- --hostname ${APP_HOST} --port ${APP_PORT}
+Environment=NODE_OPTIONS=--no-experimental-webstorage
+ExecStart=/usr/bin/npx next start --hostname ${APP_HOST} --port ${APP_PORT}
 Restart=always
 RestartSec=5
 
