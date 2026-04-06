@@ -1,4 +1,13 @@
 :root {
+  --font-display:
+    "Space Grotesk", "Inter", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    system-ui, sans-serif;
+  --font-body:
+    "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", system-ui,
+    sans-serif;
+  --font-mono:
+    "IBM Plex Mono", "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Menlo", "Consolas",
+    monospace;
   --bg: #f4f6fb;
   --panel: rgba(255, 255, 255, 0.84);
   --panel-border: rgba(11, 22, 44, 0.08);

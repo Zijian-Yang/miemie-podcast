@@ -310,17 +310,63 @@ function escape_sed_replacement() {
   printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
 }
 
+function node_bin_path() {
+  command -v node
+}
+
+function node_supports_flag() {
+  local flag="$1"
+  "$(node_bin_path)" --help 2>/dev/null | grep -Fq -- "${flag}"
+}
+
+function node_webstorage_flag() {
+  if node_supports_flag "--no-experimental-webstorage"; then
+    echo "--no-experimental-webstorage"
+  fi
+}
+
+function next_cli_path() {
+  echo "${ROOT_DIR}/node_modules/next/dist/bin/next"
+}
+
+function next_cli_shell_prefix() {
+  printf '%q ' "$(node_bin_path)"
+  local extra_flag
+  extra_flag="$(node_webstorage_flag)"
+  if [[ -n "${extra_flag}" ]]; then
+    printf '%q ' "${extra_flag}"
+  fi
+  printf '%q' "$(next_cli_path)"
+}
+
+function ensure_web_runtime_ready() {
+  if [[ ! -d "${ROOT_DIR}/node_modules" ]]; then
+    echo "未找到前端依赖，请先执行安装部署。"
+    return 1
+  fi
+  if [[ ! -f "$(next_cli_path)" ]]; then
+    echo "未找到 Next.js CLI，请先执行安装部署。"
+    return 1
+  fi
+  if [[ ! -f "${ROOT_DIR}/apps/web/.next/BUILD_ID" ]]; then
+    echo "未发现前端构建产物，正在先执行前端重建..."
+    command_rebuild_web
+  fi
+}
+
 function render_systemd_unit() {
   local template_path="$1"
   local target_path="$2"
-  local root_dir_escaped python_bin_escaped npx_bin_escaped
+  local root_dir_escaped python_bin_escaped node_bin_escaped node_flag_escaped
   root_dir_escaped="$(escape_sed_replacement "${ROOT_DIR}")"
   python_bin_escaped="$(escape_sed_replacement "${VENV_DIR}/bin/python")"
-  npx_bin_escaped="$(escape_sed_replacement "$(command -v npx)")"
+  node_bin_escaped="$(escape_sed_replacement "$(node_bin_path)")"
+  node_flag_escaped="$(escape_sed_replacement "$(node_webstorage_flag)")"
   sed \
     -e "s/__ROOT_DIR__/${root_dir_escaped}/g" \
     -e "s/__PYTHON_BIN__/${python_bin_escaped}/g" \
-    -e "s/__NPX_BIN__/${npx_bin_escaped}/g" \
+    -e "s/__NODE_BIN__/${node_bin_escaped}/g" \
+    -e "s/__NODE_WEBSTORAGE_FLAG__/${node_flag_escaped}/g" \
     "${template_path}" | sudo tee "${target_path}" >/dev/null
 }
 
@@ -329,8 +375,8 @@ function install_systemd() {
     echo "未找到 Python 虚拟环境，请先执行安装部署。"
     return 1
   fi
-  if ! command -v npx >/dev/null 2>&1; then
-    echo "未找到 npx，请先安装 Node 依赖。"
+  if ! command -v node >/dev/null 2>&1; then
+    echo "未找到 node，请先安装 Node 依赖。"
     return 1
   fi
   render_systemd_unit "${SYSTEMD_DIR}/${APP_SERVICE}.service" "/etc/systemd/system/${APP_SERVICE}.service"
@@ -342,16 +388,6 @@ function install_systemd() {
 function command_rebuild_web() {
   (cd "${ROOT_DIR}" && npm run build:web)
   echo "前端已重建。"
-}
-
-function build_node_options() {
-  local existing="${NODE_OPTIONS:-}"
-  local extra="--no-experimental-webstorage"
-  if [[ -n "${existing}" ]]; then
-    echo "${existing} ${extra}"
-  else
-    echo "${extra}"
-  fi
 }
 
 function command_install() {
@@ -497,8 +533,8 @@ function run_dev_stack() {
     worker_pid=$!
     write_dev_pid "${WORKER_SERVICE}" "${worker_pid}"
     (
-      cd "${ROOT_DIR}/apps/web"
-      env APP_ENV=development NODE_OPTIONS="$(build_node_options)" WATCHPACK_POLLING=true npx next dev --hostname "${APP_HOST}" --port "${APP_PORT}"
+      cd "${ROOT_DIR}"
+      env APP_ENV=development WATCHPACK_POLLING=true $(next_cli_shell_prefix) dev apps/web --hostname "${APP_HOST}" --port "${APP_PORT}"
     ) >>"${web_log}" 2>&1 &
     web_pid=$!
     write_dev_pid "${APP_SERVICE}" "${web_pid}"
@@ -592,6 +628,7 @@ function command_start() {
   ensure_service_management_supported || return 1
   ensure_env
   ensure_runtime_dirs
+  ensure_web_runtime_ready || return 1
   if is_systemd_mode; then
     install_systemd
     sudo systemctl reset-failed "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}" || true
@@ -607,15 +644,11 @@ function command_start() {
     echo "未找到前端依赖，请先执行安装部署。"
     return 1
   fi
-  if [[ ! -f "${ROOT_DIR}/apps/web/.next/BUILD_ID" ]]; then
-    echo "未发现前端构建产物，正在先执行前端重建..."
-    command_rebuild_web
-  fi
   ensure_port_available "${API_HOST}" "${API_PORT}" "API" || return 1
   ensure_port_available "${APP_HOST}" "${APP_PORT}" "Web" || return 1
   start_local_service "${API_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.api.app
   start_local_service "${WORKER_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main
-  start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}/apps/web\" && env APP_ENV=production NODE_OPTIONS=\"$(build_node_options)\" npx next start --hostname \"${APP_HOST}\" --port \"${APP_PORT}\""
+  start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}\" && env APP_ENV=production $(next_cli_shell_prefix) start apps/web --hostname \"${APP_HOST}\" --port \"${APP_PORT}\""
 }
 
 function command_stop() {
@@ -640,6 +673,9 @@ function command_restart() {
     echo "已取消重启。"
     return 0
   fi
+  ensure_env
+  ensure_runtime_dirs
+  ensure_web_runtime_ready || return 1
   if is_systemd_mode; then
     install_systemd
     sudo systemctl reset-failed "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}" || true
@@ -723,7 +759,7 @@ function command_update() {
     stop_local_service "${API_SERVICE}"
     start_local_service "${API_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.api.app
     start_local_service "${WORKER_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main
-    start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}/apps/web\" && env APP_ENV=production NODE_OPTIONS=\"$(build_node_options)\" npx next start --hostname \"${APP_HOST}\" --port \"${APP_PORT}\""
+    start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}\" && env APP_ENV=production $(next_cli_shell_prefix) start apps/web --hostname \"${APP_HOST}\" --port \"${APP_PORT}\""
   fi
   echo "项目已更新。"
 }

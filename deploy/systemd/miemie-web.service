@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=__ROOT_DIR__/apps/web
+WorkingDirectory=__ROOT_DIR__
 EnvironmentFile=__ROOT_DIR__/.env
-Environment=APP_ENV=production
-Environment=NODE_OPTIONS=--no-experimental-webstorage
-ExecStart=__NPX_BIN__ next start --hostname ${APP_HOST} --port ${APP_PORT}
+ExecStartPre=/usr/bin/test -f __ROOT_DIR__/node_modules/next/dist/bin/next
+ExecStartPre=/usr/bin/test -f __ROOT_DIR__/apps/web/.next/BUILD_ID
+ExecStart=/usr/bin/env APP_ENV=production __NODE_BIN__ __NODE_WEBSTORAGE_FLAG__ __ROOT_DIR__/node_modules/next/dist/bin/next start __ROOT_DIR__/apps/web --hostname ${APP_HOST} --port ${APP_PORT}
 Restart=always
 RestartSec=5
 

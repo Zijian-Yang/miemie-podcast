@@ -6,9 +6,7 @@ After=network.target miemie-api.service
 Type=simple
 WorkingDirectory=__ROOT_DIR__
 EnvironmentFile=__ROOT_DIR__/.env
-Environment=APP_ENV=production
-Environment=PYTHONUNBUFFERED=1
-ExecStart=__PYTHON_BIN__ -m miemie_podcast.worker.main
+ExecStart=/usr/bin/env APP_ENV=production PYTHONUNBUFFERED=1 __PYTHON_BIN__ -m miemie_podcast.worker.main
 Restart=always
 RestartSec=5
 
