@@ -46,6 +46,22 @@ export async function apiRequest<T>(
   return response.json() as Promise<T>;
 }
 
+export async function ensureSession(): Promise<void> {
+  try {
+    await apiRequest("/api/v1/auth/me");
+    return;
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 401) {
+      throw error;
+    }
+  }
+
+  await apiRequest("/api/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export type EpisodeListItem = {
   id: string;
   source_url: string;

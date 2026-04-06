@@ -2,16 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 
-import { API_BASE_URL, EpisodeDetail, apiRequest } from "@/lib/api";
+import { API_BASE_URL, EpisodeDetail, apiRequest, ensureSession } from "@/lib/api";
 
 type Props = {
   episodeId: string;
 };
 
 export function EpisodeDetailView({ episodeId }: Props) {
-  const router = useRouter();
   const [detail, setDetail] = useState<EpisodeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [question, setQuestion] = useState("");
@@ -28,13 +26,15 @@ export function EpisodeDetailView({ episodeId }: Props) {
     let active = true;
     async function bootstrap() {
       try {
-        await apiRequest("/api/v1/auth/me");
+        await ensureSession();
         if (!active) {
           return;
         }
         await loadDetail();
       } catch (err) {
-        router.replace("/login");
+        if (active) {
+          setError(err instanceof Error ? err.message : "加载详情失败");
+        }
       } finally {
         if (active) {
           setLoading(false);
@@ -45,7 +45,7 @@ export function EpisodeDetailView({ episodeId }: Props) {
     return () => {
       active = false;
     };
-  }, [episodeId, router]);
+  }, [episodeId]);
 
   useEffect(() => {
     if (!detail) {

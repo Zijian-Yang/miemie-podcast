@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 
-import { API_BASE_URL, EpisodeListItem, apiRequest } from "@/lib/api";
+import { API_BASE_URL, EpisodeListItem, apiRequest, ensureSession } from "@/lib/api";
 
 type DashboardPayload = {
   items: EpisodeListItem[];
@@ -16,13 +15,13 @@ type DashboardPayload = {
 const activeStatuses = new Set(["queued", "source_resolved", "transcribing", "transcribed", "analyzing"]);
 
 export function Dashboard() {
-  const router = useRouter();
   const [episodes, setEpisodes] = useState<EpisodeListItem[]>([]);
   const [search, setSearch] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
   async function loadEpisodes(currentQuery = search) {
     const query = new URLSearchParams();
@@ -37,13 +36,15 @@ export function Dashboard() {
     let active = true;
     async function bootstrap() {
       try {
-        await apiRequest("/api/v1/auth/me");
+        await ensureSession();
         if (!active) {
           return;
         }
         await loadEpisodes("");
-      } catch {
-        router.replace("/login");
+      } catch (error) {
+        if (active) {
+          setBootstrapError(error instanceof Error ? error.message : "初始化工作台失败");
+        }
       } finally {
         if (active) {
           setLoading(false);
@@ -54,7 +55,7 @@ export function Dashboard() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     const hasProcessing = episodes.some((item) => activeStatuses.has(item.status));
@@ -104,6 +105,10 @@ export function Dashboard() {
 
   if (loading) {
     return <div className="page-shell"><div className="empty-state">正在加载工作台...</div></div>;
+  }
+
+  if (bootstrapError) {
+    return <div className="page-shell"><div className="empty-state">{bootstrapError}</div></div>;
   }
 
   return (
