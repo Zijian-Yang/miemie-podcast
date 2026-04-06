@@ -329,6 +329,10 @@ function next_cli_path() {
   echo "${ROOT_DIR}/node_modules/next/dist/bin/next"
 }
 
+function standalone_server_path() {
+  echo "${ROOT_DIR}/apps/web/.next/standalone/apps/web/server.js"
+}
+
 function next_cli_shell_prefix() {
   printf '%q ' "$(node_bin_path)"
   local extra_flag
@@ -351,6 +355,38 @@ function ensure_web_runtime_ready() {
   if [[ ! -f "${ROOT_DIR}/apps/web/.next/BUILD_ID" ]]; then
     echo "未发现前端构建产物，正在先执行前端重建..."
     command_rebuild_web
+  fi
+  if [[ ! -f "$(standalone_server_path)" ]]; then
+    echo "未发现 standalone 服务入口，正在先执行前端重建..."
+    command_rebuild_web
+  fi
+  if [[ ! -d "${ROOT_DIR}/apps/web/.next/standalone/apps/web/.next/static" ]]; then
+    sync_web_standalone_assets
+  fi
+}
+
+function sync_web_standalone_assets() {
+  local standalone_app_dir static_source static_target public_source public_target
+  standalone_app_dir="${ROOT_DIR}/apps/web/.next/standalone/apps/web"
+  static_source="${ROOT_DIR}/apps/web/.next/static"
+  static_target="${standalone_app_dir}/.next/static"
+  public_source="${ROOT_DIR}/apps/web/public"
+  public_target="${standalone_app_dir}/public"
+
+  if [[ ! -d "${standalone_app_dir}" ]]; then
+    echo "未找到 standalone 构建目录，请先执行前端重建。"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "${static_target}")"
+  rm -rf "${static_target}"
+  if [[ -d "${static_source}" ]]; then
+    cp -R "${static_source}" "${static_target}"
+  fi
+
+  if [[ -d "${public_source}" ]]; then
+    rm -rf "${public_target}"
+    cp -R "${public_source}" "${public_target}"
   fi
 }
 
@@ -383,10 +419,12 @@ function install_systemd() {
   render_systemd_unit "${SYSTEMD_DIR}/${API_SERVICE}.service" "/etc/systemd/system/${API_SERVICE}.service"
   render_systemd_unit "${SYSTEMD_DIR}/${WORKER_SERVICE}.service" "/etc/systemd/system/${WORKER_SERVICE}.service"
   sudo systemctl daemon-reload
+  sudo systemctl enable "${APP_SERVICE}" "${API_SERVICE}" "${WORKER_SERVICE}" >/dev/null
 }
 
 function command_rebuild_web() {
   (cd "${ROOT_DIR}" && npm run build:web)
+  sync_web_standalone_assets
   echo "前端已重建。"
 }
 
@@ -648,7 +686,7 @@ function command_start() {
   ensure_port_available "${APP_HOST}" "${APP_PORT}" "Web" || return 1
   start_local_service "${API_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.api.app
   start_local_service "${WORKER_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main
-  start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}\" && env APP_ENV=production $(next_cli_shell_prefix) start apps/web --hostname \"${APP_HOST}\" --port \"${APP_PORT}\""
+  start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}\" && env APP_ENV=production HOSTNAME=\"${APP_HOST}\" PORT=\"${APP_PORT}\" \"$(node_bin_path)\" \"$(standalone_server_path)\""
 }
 
 function command_stop() {
@@ -759,7 +797,7 @@ function command_update() {
     stop_local_service "${API_SERVICE}"
     start_local_service "${API_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.api.app
     start_local_service "${WORKER_SERVICE}" env APP_ENV=production PYTHONUNBUFFERED=1 "${VENV_DIR}/bin/python" -m miemie_podcast.worker.main
-    start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}\" && env APP_ENV=production $(next_cli_shell_prefix) start apps/web --hostname \"${APP_HOST}\" --port \"${APP_PORT}\""
+    start_local_service "${APP_SERVICE}" bash -lc "cd \"${ROOT_DIR}\" && env APP_ENV=production HOSTNAME=\"${APP_HOST}\" PORT=\"${APP_PORT}\" \"$(node_bin_path)\" \"$(standalone_server_path)\""
   fi
   echo "项目已更新。"
 }

@@ -6,9 +6,9 @@ After=network.target
 Type=simple
 WorkingDirectory=__ROOT_DIR__
 EnvironmentFile=__ROOT_DIR__/.env
-ExecStartPre=/usr/bin/test -f __ROOT_DIR__/node_modules/next/dist/bin/next
 ExecStartPre=/usr/bin/test -f __ROOT_DIR__/apps/web/.next/BUILD_ID
-ExecStart=/usr/bin/env APP_ENV=production __NODE_BIN__ __NODE_WEBSTORAGE_FLAG__ __ROOT_DIR__/node_modules/next/dist/bin/next start __ROOT_DIR__/apps/web --hostname ${APP_HOST} --port ${APP_PORT}
+ExecStartPre=/usr/bin/test -f __ROOT_DIR__/apps/web/.next/standalone/apps/web/server.js
+ExecStart=/usr/bin/env APP_ENV=production HOSTNAME=${APP_HOST} PORT=${APP_PORT} __NODE_BIN__ __NODE_WEBSTORAGE_FLAG__ __ROOT_DIR__/apps/web/.next/standalone/apps/web/server.js
 Restart=always
 RestartSec=5
 
