@@ -102,11 +102,6 @@ export function Dashboard() {
     await loadEpisodes();
   }
 
-  async function handleLogout() {
-    await apiRequest("/api/v1/auth/logout", { method: "POST" });
-    router.replace("/login");
-  }
-
   if (loading) {
     return <div className="page-shell"><div className="empty-state">正在加载工作台...</div></div>;
   }
@@ -122,9 +117,6 @@ export function Dashboard() {
             知识沉淀、逐字稿、脑图和单集问答。
           </p>
         </div>
-        <button className="ghost-button" onClick={handleLogout}>
-          退出
-        </button>
       </section>
 
       <section className="stats-grid">

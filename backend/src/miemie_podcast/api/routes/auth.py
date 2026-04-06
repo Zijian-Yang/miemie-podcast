@@ -14,8 +14,12 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest, response: Response, container: Container = Depends(get_container)) -> LoginResponse:
-    token = container.auth_service.login(payload.password)
+def login(
+    response: Response,
+    payload: LoginRequest | None = None,
+    container: Container = Depends(get_container),
+) -> LoginResponse:
+    token = container.auth_service.login(payload.password if payload else None)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect password.")
     response.set_cookie(

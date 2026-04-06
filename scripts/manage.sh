@@ -45,7 +45,10 @@ function refresh_runtime_config() {
   DATABASE_URL="${DATABASE_URL:-sqlite:///${DATA_DIR}/miemie.db}"
   QUEUE_BACKEND="${QUEUE_BACKEND:-db_polling}"
   STORAGE_BACKEND="${STORAGE_BACKEND:-local}"
-  AUTH_MODE="${AUTH_MODE:-password_single_user}"
+  AUTH_MODE="${AUTH_MODE:-session_single_user}"
+  if [[ "${AUTH_MODE}" == "password_single_user" ]]; then
+    AUTH_MODE="session_single_user"
+  fi
   WORKER_PROCESS_COUNT="${WORKER_PROCESS_COUNT:-2}"
   ANALYSIS_CHUNK_EXTRACT_CONCURRENCY="${ANALYSIS_CHUNK_EXTRACT_CONCURRENCY:-4}"
 }

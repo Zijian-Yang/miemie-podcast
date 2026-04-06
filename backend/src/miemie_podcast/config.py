@@ -27,6 +27,13 @@ def _get_bool(name: str, default: bool) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_auth_mode(value: str | None) -> str:
+    mode = (value or "").strip()
+    if not mode or mode == "password_single_user":
+        return "session_single_user"
+    return mode
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str
@@ -81,7 +88,7 @@ class Settings:
             database_url=database_url,
             queue_backend=os.getenv("QUEUE_BACKEND", "db_polling"),
             storage_backend=os.getenv("STORAGE_BACKEND", "local"),
-            auth_mode=os.getenv("AUTH_MODE", "password_single_user"),
+            auth_mode=_normalize_auth_mode(os.getenv("AUTH_MODE", "session_single_user")),
             admin_password=os.getenv("APP_ADMIN_PASSWORD", "change-me"),
             cookie_name=os.getenv("COOKIE_NAME", "miemie_session"),
             cookie_secure=_get_bool("COOKIE_SECURE", False),

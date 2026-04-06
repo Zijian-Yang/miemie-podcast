@@ -33,10 +33,7 @@ class PasswordAuthService:
             auth_mode=self.settings.auth_mode,
         )
 
-    def login(self, password: str) -> Optional[str]:
-        if not hmac.compare_digest(password, self.settings.admin_password):
-            return None
-        context = self.bootstrap()
+    def _create_session(self, context: RequestContext) -> str:
         raw_token = secrets.token_urlsafe(32)
         self.session_repository.create(
             workspace_id=context.workspace_id,
@@ -45,6 +42,13 @@ class PasswordAuthService:
             expires_at=minutes_from_now(60 * 24 * 30),
         )
         return raw_token
+
+    def login(self, password: Optional[str] = None) -> Optional[str]:
+        if self.settings.auth_mode == "password_single_user_strict":
+            if not password or not hmac.compare_digest(password, self.settings.admin_password):
+                return None
+        context = self.bootstrap()
+        return self._create_session(context)
 
     def authenticate(self, token: str) -> Optional[RequestContext]:
         session = self.session_repository.get_by_token_hash(hash_token(token))
@@ -64,4 +68,3 @@ class PasswordAuthService:
         session = self.session_repository.get_by_token_hash(hash_token(token))
         if session:
             self.session_repository.delete(session.id)
-

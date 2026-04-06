@@ -77,7 +77,6 @@ cp .env.example .env
 至少填写：
 
 ```bash
-APP_ADMIN_PASSWORD=你的管理密码
 DASHSCOPE_API_KEY=你的百炼 Key
 ```
 
@@ -143,6 +142,8 @@ ANALYSIS_CHUNK_EXTRACT_CONCURRENCY=4
 
 - 可以直接通过菜单自定义前端端口 `APP_PORT` 和后端端口 `API_PORT`
 - 修改 `APP_HOST` / `APP_PORT` / `API_HOST` / `API_PORT` 时，脚本会自动同步 `WEB_ORIGIN` 和 `NEXT_PUBLIC_API_BASE_URL`
+- 当前默认使用单用户会话模式，进入页面会自动创建登录会话
+- `APP_ADMIN_PASSWORD` 预留给未来恢复密码登录模式，目前不是必填项
 
 ## 适用环境
 
